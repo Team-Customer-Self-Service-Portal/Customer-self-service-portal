@@ -1,1 +1,1 @@
-export { communityController } from './communityController';
+export * from './communityController';

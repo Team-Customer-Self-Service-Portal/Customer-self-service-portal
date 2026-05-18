@@ -1,139 +1,81 @@
-import { Response, NextFunction } from 'express';
-import { AuthRequest } from '../../middleware/auth';
-import User from '../../models/User';
-import { logger } from '../../utils/logger';
-import { cacheService, CacheKeys } from '../../services/cache/cacheService';
+import { NextFunction, Response } from 'express';
+import { User } from '../../models';
+import { cacheService } from '../../services/cache';
+import { AuthenticatedRequest } from '../../types';
+import { paginate, sanitizeUser } from '../../utils/helpers';
 
-class UserController {
-  async getProfile(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const userId = req.user?.id;
-
-      const cacheKey = CacheKeys.user(userId!);
-      const cachedUser = await cacheService.get(cacheKey);
-
-      if (cachedUser) {
-        res.status(200).json({
-          success: true,
-          data: { user: cachedUser }
-        });
-        return;
-      }
-
-      const user = await User.findById(userId);
-
-      if (!user) {
-        res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-        return;
-      }
-
-      await cacheService.set(cacheKey, user, 600);
-
-      res.status(200).json({
-        success: true,
-        data: { user }
-      });
-
-    } catch (error) {
-      logger.error('Get profile error:', error);
-      next(error);
+export const getProfile = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const user = await User.findById(req.user?.userId);
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
     }
+    res.json({ success: true, data: sanitizeUser(user.toObject()) });
+  } catch (error) {
+    next(error);
   }
+};
 
-  async updateProfile(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const userId = req.user?.id;
-      const { firstName, lastName, phone, timezone, language } = req.body;
-
-      const user = await User.findById(userId);
-
-      if (!user) {
-        res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-        return;
-      }
-
-      if (firstName) user.firstName = firstName;
-      if (lastName) user.lastName = lastName;
-      if (phone !== undefined) user.phone = phone;
-      if (timezone) user.timezone = timezone;
-      if (language) user.language = language;
-
-      await user.save();
-
-      await cacheService.del(CacheKeys.user(userId!));
-
-      logger.info(`User ${user.email} updated profile`, {
-        userId: user._id
-      });
-
-      res.status(200).json({
-        success: true,
-        message: 'Profile updated successfully',
-        data: { user }
-      });
-
-    } catch (error) {
-      logger.error('Update profile error:', error);
-      next(error);
+export const updateProfile = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const user = await User.findByIdAndUpdate(req.user?.userId, { firstName: req.body.firstName, lastName: req.body.lastName }, { new: true });
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
     }
+    await cacheService.del(`user:${req.user?.userId}`);
+    res.json({ success: true, data: sanitizeUser(user.toObject()) });
+  } catch (error) {
+    next(error);
   }
+};
 
-  async updatePreferences(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const userId = req.user?.id;
-      const { emailNotifications, smsNotifications, newsletter, theme } = req.body;
-
-      const user = await User.findById(userId);
-
-      if (!user) {
-        res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-        return;
-      }
-
-      if (emailNotifications !== undefined) user.preferences.emailNotifications = emailNotifications;
-      if (smsNotifications !== undefined) user.preferences.smsNotifications = smsNotifications;
-      if (newsletter !== undefined) user.preferences.newsletter = newsletter;
-      if (theme) user.preferences.theme = theme;
-
-      await user.save();
-
-      await cacheService.del(CacheKeys.user(userId!));
-
-      res.status(200).json({
-        success: true,
-        message: 'Preferences updated successfully',
-        data: { preferences: user.preferences }
-      });
-
-    } catch (error) {
-      logger.error('Update preferences error:', error);
-      next(error);
+export const changePassword = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { currentPassword, newPassword } = req.body as { currentPassword: string; newPassword: string };
+    const user = await User.findById(req.user?.userId);
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
     }
-  }
-
-  async uploadAvatar(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const userId = req.user?.id;
-
-      res.status(501).json({
-        success: false,
-        message: 'Avatar upload not yet implemented'
-      });
-
-    } catch (error) {
-      logger.error('Upload avatar error:', error);
-      next(error);
+    const valid = await user.comparePassword(currentPassword);
+    if (!valid) {
+      res.status(400).json({ success: false, message: 'Current password is incorrect' });
+      return;
     }
+    user.password = newPassword;
+    await user.save();
+    res.json({ success: true, data: {} });
+  } catch (error) {
+    next(error);
   }
-}
+};
 
-export const userController = new UserController();
+export const listUsers = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { page = '1', limit = '20' } = req.query as Record<string, string>;
+    const result = await paginate(User.find({}).sort({ createdAt: -1 }), Number(page), Number(limit));
+    res.json({
+      success: true,
+      data: result.data.map((u) => sanitizeUser(u.toObject())),
+      pagination: { total: result.total, page: result.page, pages: result.pages, limit: Number(limit) || 20 },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateRole = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { role } = req.body as { role: 'customer' | 'admin' | 'agent' };
+    const user = await User.findByIdAndUpdate(req.params.id, { role }, { new: true });
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+    res.json({ success: true, data: sanitizeUser(user.toObject()) });
+  } catch (error) {
+    next(error);
+  }
+};

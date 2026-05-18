@@ -1,77 +1,41 @@
-import { Request, Response, NextFunction } from 'express';
-import { logger } from '../utils/logger';
+import { ErrorRequestHandler } from 'express';
 
-export class AppError extends Error {
-  statusCode: number;
-  status: string;
-  isOperational: boolean;
-
-  constructor(message: string, statusCode: number) {
-    super(message);
-    this.statusCode = statusCode;
-    this.status = `${statusCode}`.startsWith('4') ? 'fail' : 'error';
-    this.isOperational = true;
-
-    Error.captureStackTrace(this, this.constructor);
-  }
+interface AppError extends Error {
+  statusCode?: number;
+  name: string;
+  errors?: unknown[];
+  code?: number;
 }
 
-export const errorHandler = (
-  err: any,
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void => {
-  err.statusCode = err.statusCode || 500;
-  err.status = err.status || 'error';
+export const errorHandler: ErrorRequestHandler = (err: AppError, _req, res, _next) => {
+  let status = err.statusCode || 500;
+  let message = err.message || 'Internal server error';
 
-  if (process.env.NODE_ENV === 'development') {
-    logger.error('Error:', {
-      message: err.message,
-      stack: err.stack,
-      statusCode: err.statusCode,
-      url: req.originalUrl,
-      method: req.method,
-    });
-
-    res.status(err.statusCode).json({
-      success: false,
-      status: err.status,
-      message: err.message,
-      stack: err.stack,
-      error: err,
-    });
-  } else {
-    logger.error('Error:', {
-      message: err.message,
-      statusCode: err.statusCode,
-      url: req.originalUrl,
-      method: req.method,
-    });
-
-    if (err.isOperational) {
-      res.status(err.statusCode).json({
-        success: false,
-        status: err.status,
-        message: err.message,
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        status: 'error',
-        message: 'Something went wrong',
-      });
-    }
+  if (err.name === 'ValidationError') {
+    status = 400;
+    message = 'Validation error';
   }
-};
+  if (err.name === 'UnauthorizedError') {
+    status = 401;
+    message = 'Unauthorized';
+  }
+  if (err.name === 'ForbiddenError') {
+    status = 403;
+    message = 'Forbidden';
+  }
+  if (err.name === 'NotFoundError') {
+    status = 404;
+    message = 'Not found';
+  }
+  if (err.name === 'MongoServerError' && err.code === 11000) {
+    status = 409;
+    message = 'Duplicate key error';
+  }
 
-export const notFound = (req: Request, res: Response, next: NextFunction): void => {
-  const error = new AppError(`Route ${req.originalUrl} not found`, 404);
-  next(error);
-};
-
-export const asyncHandler = (fn: Function) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
-  };
+  res.status(status).json({
+    success: false,
+    message,
+    errors: err.errors,
+    ...(process.env.NODE_ENV !== 'production' ? { stack: err.stack } : {}),
+  });
 };

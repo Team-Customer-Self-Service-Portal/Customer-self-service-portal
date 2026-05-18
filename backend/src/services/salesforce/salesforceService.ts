@@ -1,400 +1,133 @@
 import axios, { AxiosInstance } from 'axios';
+import { Case } from '../../models';
 import { logger } from '../../utils/logger';
-import { cacheService, CacheKeys } from '../cache/cacheService';
 
-interface SalesforceConfig {
-  instanceUrl: string;
-  clientId: string;
-  clientSecret: string;
-  username: string;
-  password: string;
-  securityToken: string;
-  apiVersion: string;
-}
-
-interface SalesforceAuthResponse {
+interface SalesforceTokenResponse {
   access_token: string;
   instance_url: string;
-  id: string;
-  token_type: string;
-  issued_at: string;
-  signature: string;
 }
 
-interface SalesforceCase {
-  Id?: string;
-  CaseNumber?: string;
-  Subject: string;
-  Description: string;
-  Status: string;
-  Priority: string;
-  Origin: string;
-  ContactId: string;
-  AccountId?: string;
-  Type?: string;
-  Reason?: string;
-  CreatedDate?: string;
-  LastModifiedDate?: string;
-  ClosedDate?: string;
-  IsClosed?: boolean;
-  Owner?: {
-    Name: string;
-    Email: string;
-  };
-}
-
-interface SalesforceContact {
-  Id?: string;
-  FirstName: string;
-  LastName: string;
-  Email: string;
-  Phone?: string;
-  AccountId?: string;
-  CreatedDate?: string;
-  LastModifiedDate?: string;
-}
-
-interface SalesforceKnowledgeArticle {
-  Id?: string;
-  Title: string;
-  Summary?: string;
-  UrlName: string;
-  ArticleNumber?: string;
-  CreatedDate?: string;
-  LastModifiedDate?: string;
-  PublishStatus: string;
-  Language: string;
-  ArticleBody?: string;
-  Categories?: string[];
-}
-
-export class SalesforceService {
-  private axiosInstance: AxiosInstance;
-  private config: SalesforceConfig;
+class SalesforceService {
   private accessToken: string | null = null;
   private instanceUrl: string | null = null;
+  private readonly loginUrl = 'https://login.salesforce.com/services/oauth2/token';
 
-  constructor() {
-    this.config = {
-      instanceUrl: process.env.SALESFORCE_INSTANCE_URL || '',
-      clientId: process.env.SALESFORCE_CLIENT_ID || '',
-      clientSecret: process.env.SALESFORCE_CLIENT_SECRET || '',
-      username: process.env.SALESFORCE_USERNAME || '',
-      password: process.env.SALESFORCE_PASSWORD || '',
-      securityToken: process.env.SALESFORCE_SECURITY_TOKEN || '',
-      apiVersion: process.env.SALESFORCE_API_VERSION || 'v58.0',
-    };
-
-    this.axiosInstance = axios.create({
-      timeout: 30000,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
+  private api(): AxiosInstance {
+    return axios.create({
+      baseURL: this.instanceUrl || process.env.SALESFORCE_INSTANCE_URL,
+      headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {},
     });
-
-    this.setupInterceptors();
   }
 
-  private setupInterceptors(): void {
-    this.axiosInstance.interceptors.request.use(
-      async (config) => {
-        if (!this.accessToken) {
-          await this.authenticate();
-        }
-        
-        if (this.accessToken) {
-          config.headers.Authorization = `Bearer ${this.accessToken}`;
-        }
-        
-        return config;
-      },
-      (error) => {
-        logger.error('Salesforce request interceptor error:', error);
-        return Promise.reject(error);
-      }
-    );
-
-    this.axiosInstance.interceptors.response.use(
-      (response) => response,
-      async (error) => {
-        if (error.response?.status === 401) {
-          logger.warn('Salesforce token expired, refreshing...');
-          
-          this.accessToken = null;
-          await cacheService.del('salesforce:auth_token');
-          
-          const originalRequest = error.config;
-          if (!originalRequest._retry) {
-            originalRequest._retry = true;
-            await this.authenticate();
-            originalRequest.headers.Authorization = `Bearer ${this.accessToken}`;
-            return this.axiosInstance(originalRequest);
-          }
-        }
-        
-        logger.error('Salesforce API error:', {
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          data: error.response?.data,
-          url: error.config?.url,
-        });
-        
-        return Promise.reject(error);
-      }
-    );
-  }
-
-  public async authenticate(): Promise<void> {
+  async authenticate(): Promise<void> {
     try {
-      const cachedToken = await cacheService.get<string>('salesforce:auth_token');
-      if (cachedToken) {
-        this.accessToken = cachedToken;
-        return;
-      }
-
-      logger.info('Authenticating with Salesforce...');
-
-      const authUrl = `${this.config.instanceUrl}/services/oauth2/token`;
-      const authData = new URLSearchParams({
+      const params = new URLSearchParams({
         grant_type: 'password',
-        client_id: this.config.clientId,
-        client_secret: this.config.clientSecret,
-        username: this.config.username,
-        password: this.config.password + this.config.securityToken,
+        client_id: process.env.SALESFORCE_CLIENT_ID || '',
+        client_secret: process.env.SALESFORCE_CLIENT_SECRET || '',
+        username: process.env.SALESFORCE_USERNAME || '',
+        password: `${process.env.SALESFORCE_PASSWORD || ''}${process.env.SALESFORCE_SECURITY_TOKEN || ''}`,
       });
-
-      const response = await axios.post<SalesforceAuthResponse>(
-        authUrl,
-        authData.toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-        }
-      );
-
+      const response = await axios.post<SalesforceTokenResponse>(this.loginUrl, params.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
       this.accessToken = response.data.access_token;
       this.instanceUrl = response.data.instance_url;
-
-      await cacheService.set('salesforce:auth_token', this.accessToken, 3600);
-
-      logger.info('✅ Salesforce authentication successful');
-    } catch (error: any) {
-      logger.error('Salesforce authentication failed:', error.response?.data || error.message);
-      throw new Error('Failed to authenticate with Salesforce');
-    }
-  }
-
-  public async testConnection(): Promise<boolean> {
-    try {
-      const response = await this.axiosInstance.get(
-        `${this.instanceUrl}/services/data/v${this.config.apiVersion}/limits`
-      );
-      return response.status === 200;
     } catch (error) {
-      logger.error('Salesforce connection test failed:', error);
-      return false;
+      logger.error('Salesforce authentication failed', { error: error instanceof Error ? error.message : String(error) });
+      throw error;
     }
   }
 
-  public async createCase(caseData: Partial<SalesforceCase>): Promise<SalesforceCase> {
+  private async runWithRefresh<T>(cb: () => Promise<T>): Promise<T> {
     try {
-      const response = await this.axiosInstance.post(
-        `${this.instanceUrl}/services/data/v${this.config.apiVersion}/sobjects/Case`,
-        {
-          Subject: caseData.Subject,
-          Description: caseData.Description,
-          Status: caseData.Status || 'New',
-          Priority: caseData.Priority || 'Medium',
-          Origin: caseData.Origin || 'Web',
-          ContactId: caseData.ContactId,
-          AccountId: caseData.AccountId,
-          Type: caseData.Type,
-          Reason: caseData.Reason,
-        }
-      );
-
-      const createdCase = await this.getCaseById(response.data.id);
-      
-      if (caseData.ContactId) {
-        await cacheService.delPattern(`sf:cases:contact:${caseData.ContactId}:*`);
+      if (!this.accessToken) {
+        await this.authenticate();
       }
-
-      logger.info(`✅ Created case ${createdCase.CaseNumber} in Salesforce`);
-      return createdCase;
-    } catch (error: any) {
-      logger.error('Failed to create case in Salesforce:', error.response?.data || error.message);
-      throw new Error('Failed to create case in Salesforce');
-    }
-  }
-
-  public async getCaseById(caseId: string): Promise<SalesforceCase> {
-    try {
-      const cacheKey = CacheKeys.salesforceSync('case', caseId);
-      const cachedCase = await cacheService.get<SalesforceCase>(cacheKey);
-      if (cachedCase) {
-        return cachedCase;
-      }
-
-      const response = await this.axiosInstance.get(
-        `${this.instanceUrl}/services/data/v${this.config.apiVersion}/sobjects/Case/${caseId}?fields=Id,CaseNumber,Subject,Description,Status,Priority,Origin,ContactId,AccountId,Type,Reason,CreatedDate,LastModifiedDate,ClosedDate,IsClosed,Owner.Name,Owner.Email`
-      );
-
-      const caseData = response.data;
-      
-      await cacheService.set(cacheKey, caseData, 300);
-
-      return caseData;
-    } catch (error: any) {
-      logger.error('Failed to get case from Salesforce:', error.response?.data || error.message);
-      throw new Error('Failed to get case from Salesforce');
-    }
-  }
-
-  public async getCasesByContactId(contactId: string, limit: number = 50): Promise<SalesforceCase[]> {
-    try {
-      const cacheKey = `sf:cases:contact:${contactId}:limit:${limit}`;
-      const cachedCases = await cacheService.get<SalesforceCase[]>(cacheKey);
-      if (cachedCases) {
-        return cachedCases;
-      }
-
-      const soql = `SELECT Id,CaseNumber,Subject,Description,Status,Priority,Origin,ContactId,AccountId,Type,Reason,CreatedDate,LastModifiedDate,ClosedDate,IsClosed,Owner.Name,Owner.Email FROM Case WHERE ContactId = '${contactId}' ORDER BY CreatedDate DESC LIMIT ${limit}`;
-      
-      const response = await this.axiosInstance.get(
-        `${this.instanceUrl}/services/data/v${this.config.apiVersion}/query?q=${encodeURIComponent(soql)}`
-      );
-
-      const cases = response.data.records;
-      
-      await cacheService.set(cacheKey, cases, 120);
-
-      return cases;
-    } catch (error: any) {
-      logger.error('Failed to get cases from Salesforce:', error.response?.data || error.message);
-      throw new Error('Failed to get cases from Salesforce');
-    }
-  }
-
-  public async updateCase(caseId: string, updateData: Partial<SalesforceCase>): Promise<SalesforceCase> {
-    try {
-      await this.axiosInstance.patch(
-        `${this.instanceUrl}/services/data/v${this.config.apiVersion}/sobjects/Case/${caseId}`,
-        updateData
-      );
-
-      const cacheKey = CacheKeys.salesforceSync('case', caseId);
-      await cacheService.del(cacheKey);
-
-      const updatedCase = await this.getCaseById(caseId);
-      
-      logger.info(`✅ Updated case ${updatedCase.CaseNumber} in Salesforce`);
-      return updatedCase;
-    } catch (error: any) {
-      logger.error('Failed to update case in Salesforce:', error.response?.data || error.message);
-      throw new Error('Failed to update case in Salesforce');
-    }
-  }
-
-  public async upsertContact(contactData: Partial<SalesforceContact>): Promise<SalesforceContact> {
-    try {
-      let existingContact = null;
-      if (contactData.Email) {
-        existingContact = await this.getContactByEmail(contactData.Email);
-      }
-
-      if (existingContact) {
-        await this.axiosInstance.patch(
-          `${this.instanceUrl}/services/data/v${this.config.apiVersion}/sobjects/Contact/${existingContact.Id}`,
-          {
-            FirstName: contactData.FirstName,
-            LastName: contactData.LastName,
-            Phone: contactData.Phone,
-          }
-        );
-        
-        return await this.getContactById(existingContact.Id!);
-      } else {
-        const response = await this.axiosInstance.post(
-          `${this.instanceUrl}/services/data/v${this.config.apiVersion}/sobjects/Contact`,
-          contactData
-        );
-
-        const createdContact = await this.getContactById(response.data.id);
-        logger.info(`✅ Created contact ${createdContact.Email} in Salesforce`);
-        return createdContact;
-      }
-    } catch (error: any) {
-      logger.error('Failed to upsert contact in Salesforce:', error.response?.data || error.message);
-      throw new Error('Failed to upsert contact in Salesforce');
-    }
-  }
-
-  private async getContactByEmail(email: string): Promise<SalesforceContact | null> {
-    try {
-      const soql = `SELECT Id,FirstName,LastName,Email,Phone,AccountId,CreatedDate,LastModifiedDate FROM Contact WHERE Email = '${email}' LIMIT 1`;
-      
-      const response = await this.axiosInstance.get(
-        `${this.instanceUrl}/services/data/v${this.config.apiVersion}/query?q=${encodeURIComponent(soql)}`
-      );
-
-      return response.data.records[0] || null;
+      return await cb();
     } catch (error) {
-      return null;
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        await this.authenticate();
+        return cb();
+      }
+      throw error;
     }
   }
 
-  public async getContactById(contactId: string): Promise<SalesforceContact> {
-    try {
-      const response = await this.axiosInstance.get(
-        `${this.instanceUrl}/services/data/v${this.config.apiVersion}/sobjects/Contact/${contactId}?fields=Id,FirstName,LastName,Email,Phone,AccountId,CreatedDate,LastModifiedDate`
-      );
+  async createCase(data: Record<string, unknown>): Promise<string> {
+    return this.runWithRefresh(async () => {
+      const response = await this.api().post<{ id: string }>('/services/data/v58.0/sobjects/Case', data);
+      return response.data.id;
+    });
+  }
 
+  async updateCase(sfId: string, data: Record<string, unknown>): Promise<void> {
+    await this.runWithRefresh(async () => {
+      await this.api().patch(`/services/data/v58.0/sobjects/Case/${sfId}`, data);
+    });
+  }
+
+  async getCase(sfId: string): Promise<Record<string, unknown>> {
+    return this.runWithRefresh(async () => {
+      const response = await this.api().get<Record<string, unknown>>(`/services/data/v58.0/sobjects/Case/${sfId}`);
       return response.data;
-    } catch (error: any) {
-      logger.error('Failed to get contact from Salesforce:', error.response?.data || error.message);
-      throw new Error('Failed to get contact from Salesforce');
-    }
+    });
   }
 
-  public async getKnowledgeArticles(
-    limit: number = 20,
-    category?: string,
-    searchTerm?: string
-  ): Promise<SalesforceKnowledgeArticle[]> {
-    try {
-      const cacheKey = `sf:knowledge:list:${category || 'all'}:${searchTerm || 'all'}:${limit}`;
-      const cachedArticles = await cacheService.get<SalesforceKnowledgeArticle[]>(cacheKey);
-      if (cachedArticles) {
-        return cachedArticles;
-      }
+  async queryCases(contactId: string): Promise<Record<string, unknown>[]> {
+    return this.runWithRefresh(async () => {
+      const soql = `SELECT Id, CaseNumber, Subject, Description, Status, Priority, Type FROM Case WHERE ContactId='${contactId}'`;
+      const response = await this.api().get<{ records: Record<string, unknown>[] }>('/services/data/v58.0/query', { params: { q: soql } });
+      return response.data.records;
+    });
+  }
 
-      let soql = `SELECT Id,Title,Summary,UrlName,ArticleNumber,CreatedDate,LastModifiedDate,PublishStatus,Language FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' AND Language = 'en_US'`;
-      
+  async getKnowledgeArticles(query?: string, category?: string): Promise<Record<string, unknown>[]> {
+    return this.runWithRefresh(async () => {
+      const clauses: string[] = ["PublishStatus='Online'"];
+      if (query) {
+        clauses.push(`Title LIKE '%${query.replace(/'/g, "\\'")}%'`);
+      }
       if (category) {
-        soql += ` AND ArticleType = '${category}'`;
+        clauses.push(`DataCategoryName='${category.replace(/'/g, "\\'")}'`);
       }
-      
-      if (searchTerm) {
-        soql += ` AND (Title LIKE '%${searchTerm}%' OR Summary LIKE '%${searchTerm}%')`;
-      }
-      
-      soql += ` ORDER BY LastModifiedDate DESC LIMIT ${limit}`;
+      const soql = `SELECT Id, Title, Summary, UrlName FROM Knowledge__kav WHERE ${clauses.join(' AND ')}`;
+      const response = await this.api().get<{ records: Record<string, unknown>[] }>('/services/data/v58.0/query', { params: { q: soql } });
+      return response.data.records;
+    });
+  }
 
-      const response = await this.axiosInstance.get(
-        `${this.instanceUrl}/services/data/v${this.config.apiVersion}/query?q=${encodeURIComponent(soql)}`
-      );
+  async getKnowledgeArticle(sfId: string): Promise<Record<string, unknown>> {
+    return this.runWithRefresh(async () => {
+      const response = await this.api().get<Record<string, unknown>>(`/services/data/v58.0/sobjects/Knowledge__kav/${sfId}`);
+      return response.data;
+    });
+  }
 
-      const articles = response.data.records;
-      
-      await cacheService.set(cacheKey, articles, 600);
-
-      return articles;
-    } catch (error: any) {
-      logger.error('Failed to get knowledge articles from Salesforce:', error.response?.data || error.message);
-      return [];
-    }
+  async syncCases(contactId: string): Promise<void> {
+    const sfCases = await this.queryCases(contactId);
+    await Promise.all(
+      sfCases.map(async (sfCase) => {
+        const salesforceCaseId = String(sfCase.Id || '');
+        if (!salesforceCaseId) {
+          return;
+        }
+        await Case.updateOne(
+          { salesforceCaseId },
+          {
+            $set: {
+              salesforceCaseNumber: sfCase.CaseNumber,
+              subject: sfCase.Subject,
+              description: sfCase.Description,
+              status: sfCase.Status,
+              priority: sfCase.Priority,
+              category: sfCase.Type || 'General',
+            },
+          },
+          { upsert: true }
+        );
+      })
+    );
   }
 }
 

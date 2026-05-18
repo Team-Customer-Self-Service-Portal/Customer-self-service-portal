@@ -1,1 +1,1 @@
-export { knowledgeController } from './knowledgeController';
+export * from './knowledgeController';

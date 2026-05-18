@@ -1,38 +1,47 @@
-export const generateCaseNumber = (count: number): string => {
-  return `CASE-${String(count + 1).padStart(6, '0')}`;
-};
+import { PAGINATION_DEFAULT_LIMIT, PAGINATION_MAX_LIMIT } from './constants';
 
-export const sanitizeInput = (input: string): string => {
-  return input.trim().replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-};
+export interface PaginationResult<T> {
+  data: T[];
+  total: number;
+  page: number;
+  pages: number;
+}
 
-export const formatDate = (date: Date): string => {
-  return new Date(date).toISOString();
-};
+interface QueryLike<T> {
+  skip(n: number): QueryLike<T>;
+  limit(n: number): QueryLike<T>;
+  exec(): Promise<T[]>;
+  model: {
+    countDocuments(filter: Record<string, unknown>): { exec(): Promise<number> };
+  };
+  getFilter(): Record<string, unknown>;
+}
 
-export const calculatePagination = (page: number, limit: number, total: number) => {
+export const paginate = async <T>(query: QueryLike<T>, page = 1, limit = PAGINATION_DEFAULT_LIMIT): Promise<PaginationResult<T>> => {
+  const safePage = Math.max(page, 1);
+  const safeLimit = Math.min(Math.max(limit, 1), PAGINATION_MAX_LIMIT);
+  const skip = (safePage - 1) * safeLimit;
+  const [data, total] = await Promise.all([
+    query.skip(skip).limit(safeLimit).exec(),
+    query.model.countDocuments(query.getFilter()).exec(),
+  ]);
+
   return {
-    page,
-    limit,
+    data,
     total,
-    pages: Math.ceil(total / limit),
-    hasNext: page < Math.ceil(total / limit),
-    hasPrev: page > 1,
+    page: safePage,
+    pages: Math.max(Math.ceil(total / safeLimit), 1),
   };
 };
 
-export const generateRandomString = (length: number = 32): string => {
-  return require('crypto').randomBytes(length).toString('hex');
-};
+export const generateCaseNumber = (): string => `CS-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-export const hashString = (str: string): string => {
-  return require('crypto').createHash('sha256').update(str).digest('hex');
-};
+type WithOptionalPassword = { password?: string };
+type WithToObject<T> = { toObject: () => T };
 
-export const isValidObjectId = (id: string): boolean => {
-  return /^[0-9a-fA-F]{24}$/.test(id);
-};
-
-export const delay = (ms: number): Promise<void> => {
-  return new Promise(resolve => setTimeout(resolve, ms));
+export const sanitizeUser = <T extends WithOptionalPassword>(user: T | WithToObject<T>): Omit<T, 'password'> => {
+  const maybeDoc = user as Partial<WithToObject<T>>;
+  const plain: T = typeof maybeDoc.toObject === 'function' ? maybeDoc.toObject() : (user as T);
+  const { password, ...sanitized } = plain;
+  return sanitized;
 };

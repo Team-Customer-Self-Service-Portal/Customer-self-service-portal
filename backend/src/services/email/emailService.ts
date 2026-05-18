@@ -1,104 +1,54 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import nodemailer from 'nodemailer';
-import { logger } from '../../utils/logger';
+import { IUser } from '../../models';
 
-interface EmailOptions {
-  to: string;
+interface CaseEmailData {
+  caseNumber: string;
   subject: string;
-  text?: string;
-  html?: string;
+  status?: string;
 }
 
-class EmailService {
-  private transporter: nodemailer.Transporter;
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT || 587),
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
-  constructor() {
-    this.transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.EMAIL_PORT || '587'),
-      secure: false,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
-  }
+const templateDir = path.join(__dirname, 'templates');
 
-  async sendEmail(options: EmailOptions): Promise<void> {
-    try {
-      const mailOptions = {
-        from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-        to: options.to,
-        subject: options.subject,
-        text: options.text,
-        html: options.html,
-      };
+const renderTemplate = (templateName: string, data: Record<string, string>): string => {
+  const filePath = path.join(templateDir, templateName);
+  let html = fs.readFileSync(filePath, 'utf8');
+  Object.entries(data).forEach(([key, value]) => {
+    html = html.replace(new RegExp(`{{{${key}}}}`, 'g'), value);
+  });
+  return html;
+};
 
-      await this.transporter.sendMail(mailOptions);
+const send = async (to: string, subject: string, html: string): Promise<void> => {
+  await transporter.sendMail({ from: process.env.FROM_EMAIL, to, subject, html });
+};
 
-      logger.info(`Email sent successfully to ${options.to}`, {
-        subject: options.subject
-      });
-
-    } catch (error) {
-      logger.error('Failed to send email:', error);
-      throw new Error('Failed to send email');
-    }
-  }
-
-  async sendPasswordResetEmail(email: string, resetToken: string): Promise<void> {
-    const resetUrl = `${process.env.FRONTEND_URL}/auth/reset-password?token=${resetToken}`;
-
-    const html = `
-      <h1>Password Reset Request</h1>
-      <p>You requested a password reset for your account.</p>
-      <p>Click the link below to reset your password:</p>
-      <a href="${resetUrl}">${resetUrl}</a>
-      <p>This link will expire in 10 minutes.</p>
-      <p>If you didn't request this, please ignore this email.</p>
-    `;
-
-    await this.sendEmail({
-      to: email,
-      subject: 'Password Reset Request',
-      html,
-    });
-  }
-
-  async sendWelcomeEmail(email: string, firstName: string): Promise<void> {
-    const html = `
-      <h1>Welcome to Customer Portal!</h1>
-      <p>Hi ${firstName},</p>
-      <p>Thank you for creating an account with us.</p>
-      <p>You can now access our self-service portal to:</p>
-      <ul>
-        <li>Create and track support cases</li>
-        <li>Browse our knowledge base</li>
-        <li>Participate in community discussions</li>
-      </ul>
-      <p>Get started: <a href="${process.env.FRONTEND_URL}">${process.env.FRONTEND_URL}</a></p>
-    `;
-
-    await this.sendEmail({
-      to: email,
-      subject: 'Welcome to Customer Portal',
-      html,
-    });
-  }
-
-  async sendCaseUpdateEmail(email: string, caseNumber: string, status: string): Promise<void> {
-    const html = `
-      <h1>Case Update Notification</h1>
-      <p>Your case ${caseNumber} has been updated.</p>
-      <p><strong>New Status:</strong> ${status}</p>
-      <p>View your case: <a href="${process.env.FRONTEND_URL}/cases/${caseNumber}">${process.env.FRONTEND_URL}/cases/${caseNumber}</a></p>
-    `;
-
-    await this.sendEmail({
-      to: email,
-      subject: `Case ${caseNumber} Updated`,
-      html,
-    });
-  }
-}
-
-export const emailService = new EmailService();
+export const emailService = {
+  async sendWelcomeEmail(user: IUser): Promise<void> {
+    const html = renderTemplate('welcome.html', { firstName: user.firstName, fullName: `${user.firstName} ${user.lastName}` });
+    await send(user.email, 'Welcome to Customer Self-Service Portal', html);
+  },
+  async sendCaseCreatedEmail(user: IUser, caseData: CaseEmailData): Promise<void> {
+    const html = renderTemplate('caseCreated.html', { firstName: user.firstName, caseNumber: caseData.caseNumber, subject: caseData.subject });
+    await send(user.email, `Case ${caseData.caseNumber} created`, html);
+  },
+  async sendCaseUpdatedEmail(user: IUser, caseData: CaseEmailData, updateMessage: string): Promise<void> {
+    const html = renderTemplate('caseUpdated.html', { firstName: user.firstName, caseNumber: caseData.caseNumber, status: caseData.status || 'Updated', updateMessage });
+    await send(user.email, `Case ${caseData.caseNumber} updated`, html);
+  },
+  async sendPasswordResetEmail(user: IUser, resetToken: string): Promise<void> {
+    const html = renderTemplate('passwordReset.html', { firstName: user.firstName, resetToken });
+    await send(user.email, 'Reset your password', html);
+  },
+};

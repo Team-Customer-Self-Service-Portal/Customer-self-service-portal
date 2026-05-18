@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: customer-portal-backend
+    env: node
+    rootDir: backend
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        value: https://your-frontend.example.com
+      - key: MONGODB_URI
+        value: mongodb+srv://user:password@cluster.mongodb.net/customer_portal
+      - key: REDIS_HOST
+        value: your-redis-host
+      - key: REDIS_PORT
+        value: 6379
+      - key: REDIS_USERNAME
+        value: default
+      - key: REDIS_PASSWORD
+        value: your-redis-password
+      - key: REDIS_TLS
+        value: "true"
+      - key: JWT_SECRET
+        value: replace-with-secret
+      - key: JWT_EXPIRE_TIME
+        value: 1d
+      - key: SALESFORCE_INSTANCE_URL
+        value: https://your-instance.my.salesforce.com
+      - key: SALESFORCE_CLIENT_ID
+        value: your-client-id
+      - key: SALESFORCE_CLIENT_SECRET
+        value: your-client-secret
+      - key: SALESFORCE_USERNAME
+        value: your-salesforce-user
+      - key: SALESFORCE_PASSWORD
+        value: your-salesforce-password
+      - key: SALESFORCE_SECURITY_TOKEN
+        value: your-salesforce-security-token
+      - key: SMTP_HOST
+        value: smtp.mailtrap.io
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_USER
+        value: your-smtp-user
+      - key: SMTP_PASS
+        value: your-smtp-pass
+      - key: FROM_EMAIL
+        value: no-reply@customer-portal.com
+      - key: SENTRY_DSN
+        value: ''
+
+  - type: redis
+    name: customer-portal-redis
+    plan: starter

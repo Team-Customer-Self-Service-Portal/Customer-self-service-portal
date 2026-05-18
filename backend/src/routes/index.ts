@@ -1,16 +1,16 @@
 import { Router } from 'express';
-import authRoutes from './auth';
-import caseRoutes from './cases';
-import knowledgeRoutes from './knowledge';
-import communityRoutes from './community';
-import userRoutes from './users';
+import authRouter from './auth';
+import casesRouter from './cases';
+import knowledgeRouter from './knowledge';
+import communityRouter from './community';
+import usersRouter from './users';
 
 const router = Router();
 
-router.use('/auth', authRoutes);
-router.use('/cases', caseRoutes);
-router.use('/knowledge', knowledgeRoutes);
-router.use('/community', communityRoutes);
-router.use('/users', userRoutes);
+router.use('/auth', authRouter);
+router.use('/cases', casesRouter);
+router.use('/knowledge', knowledgeRouter);
+router.use('/community', communityRouter);
+router.use('/users', usersRouter);
 
 export default router;

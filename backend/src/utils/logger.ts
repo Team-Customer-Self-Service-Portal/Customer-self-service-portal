@@ -1,46 +1,24 @@
 import winston from 'winston';
-import path from 'path';
 
-const logFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.errors({ stack: true }),
-  winston.format.splat(),
-  winston.format.json()
-);
+const { combine, timestamp, errors, json, colorize, printf } = winston.format;
 
-const consoleFormat = winston.format.combine(
-  winston.format.colorize(),
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.printf(({ timestamp, level, message, ...meta }) => {
-    let msg = `${timestamp} [${level}]: ${message}`;
-    if (Object.keys(meta).length > 0) {
-      msg += ` ${JSON.stringify(meta)}`;
-    }
-    return msg;
-  })
+const consoleFormat = combine(
+  colorize(),
+  timestamp(),
+  errors({ stack: true }),
+  printf(({ level, message, timestamp: ts, ...meta }) => `${String(ts)} [${level}] ${String(message)} ${Object.keys(meta).length ? JSON.stringify(meta) : ''}`)
 );
 
 export const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  format: logFormat,
-  defaultMeta: { service: 'customer-portal-api' },
+  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  format: combine(timestamp(), errors({ stack: true }), json()),
+  defaultMeta: { service: 'customer-self-service-backend' },
   transports: [
-    new winston.transports.File({
-      filename: path.join('logs', 'error.log'),
-      level: 'error',
-      maxsize: 5242880,
-      maxFiles: 5,
-    }),
-    new winston.transports.File({
-      filename: path.join('logs', 'combined.log'),
-      maxsize: 5242880,
-      maxFiles: 5,
-    }),
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' }),
   ],
 });
 
 if (process.env.NODE_ENV !== 'production') {
-  logger.add(new winston.transports.Console({
-    format: consoleFormat,
-  }));
+  logger.add(new winston.transports.Console({ format: consoleFormat }));
 }

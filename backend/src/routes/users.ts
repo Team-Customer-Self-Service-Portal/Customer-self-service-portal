@@ -1,15 +1,14 @@
 import { Router } from 'express';
-import { userController } from '../controllers/users';
-import { authenticate } from '../middleware/auth';
-import { validate, userValidation } from '../middleware/validation';
+import { changePassword, getProfile, listUsers, updateProfile, updateRole } from '../controllers/users';
+import { requireAdmin, verifyToken } from '../middleware/auth';
 
 const router = Router();
 
-router.use(authenticate);
-
-router.get('/profile', userController.getProfile.bind(userController));
-router.put('/profile', validate(userValidation.updateProfile), userController.updateProfile.bind(userController));
-router.put('/preferences', validate(userValidation.updatePreferences), userController.updatePreferences.bind(userController));
-router.post('/avatar', userController.uploadAvatar.bind(userController));
+router.use(verifyToken);
+router.get('/profile', getProfile);
+router.put('/profile', updateProfile);
+router.put('/change-password', changePassword);
+router.get('/', requireAdmin, listUsers);
+router.put('/:id/role', requireAdmin, updateRole);
 
 export default router;

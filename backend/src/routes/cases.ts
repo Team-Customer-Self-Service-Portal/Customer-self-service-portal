@@ -1,17 +1,16 @@
 import { Router } from 'express';
-import { caseController } from '../controllers/cases';
-import { authenticate } from '../middleware/auth';
-import { validate, caseValidation } from '../middleware/validation';
+import { addComment, createCase, deleteCase, getCaseById, listCases, updateCase } from '../controllers/cases';
+import { requireAdmin, verifyToken } from '../middleware/auth';
+import { createCaseValidator, createCommentValidator, updateCaseValidator } from '../middleware/validation';
 
 const router = Router();
 
-router.use(authenticate);
-
-router.post('/', validate(caseValidation.create), caseController.createCase.bind(caseController));
-router.get('/', caseController.getCases.bind(caseController));
-router.get('/:id', caseController.getCaseById.bind(caseController));
-router.put('/:id', validate(caseValidation.update), caseController.updateCase.bind(caseController));
-router.delete('/:id', caseController.deleteCase.bind(caseController));
-router.post('/:id/comments', validate(caseValidation.addComment), caseController.addComment.bind(caseController));
+router.use(verifyToken);
+router.get('/', listCases);
+router.post('/', createCaseValidator, createCase);
+router.get('/:id', getCaseById);
+router.put('/:id', updateCaseValidator, updateCase);
+router.delete('/:id', requireAdmin, deleteCase);
+router.post('/:id/comments', createCommentValidator, addComment);
 
 export default router;
