@@ -1,0 +1,1 @@
+export { communityController } from './communityController';

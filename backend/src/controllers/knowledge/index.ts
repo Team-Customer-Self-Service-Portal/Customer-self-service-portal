@@ -1,0 +1,1 @@
+export { knowledgeController } from './knowledgeController';
