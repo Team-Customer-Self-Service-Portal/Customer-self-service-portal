@@ -16,13 +16,13 @@ services:
       - key: MONGODB_URI
         value: mongodb+srv://user:password@cluster.mongodb.net/customer_portal
       - key: REDIS_HOST
-        value: your-redis-host
+        value: your-upstash-host
       - key: REDIS_PORT
         value: 6379
       - key: REDIS_USERNAME
         value: default
       - key: REDIS_PASSWORD
-        value: your-redis-password
+        value: your-upstash-token
       - key: REDIS_TLS
         value: "true"
       - key: JWT_SECRET
@@ -52,8 +52,4 @@ services:
       - key: FROM_EMAIL
         value: no-reply@customer-portal.com
       - key: SENTRY_DSN
-        value: ''
-
-  - type: redis
-    name: customer-portal-redis
-    plan: starter
+        value: ""
