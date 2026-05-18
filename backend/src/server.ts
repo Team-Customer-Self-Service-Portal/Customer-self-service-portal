@@ -19,8 +19,28 @@ dotenv.config();
 
 export const app = express();
 
+const allowedOrigins = new Set<string>([
+  'http://localhost:3000',
+  'https://customer-self-service-portal.vercel.app',
+]);
+
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.add(process.env.FRONTEND_URL);
+}
+
 app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_URL || '*', credentials: true }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  })
+);
 app.use(compression());
 app.use(httpLogger);
 app.use(express.json());
